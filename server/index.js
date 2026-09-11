@@ -426,3 +426,384 @@ io.on('connection', socket => {
 
   socket.on('login', (data, cb) => {
     if (
+      !NAMES.includes(data?.name) ||
+      data?.password !== PASSWORD
+    ) {
+      return cb({
+        ok: false,
+        error:
+          'Väärä nimi tai salasana.'
+      });
+    }
+
+    socket.data.name =
+      data.name;
+
+    cb({
+      ok: true
+    });
+  });
+
+  socket.on('createRoom', cb => {
+    if (!socket.data.name) {
+      return cb({
+        ok: false,
+        error: 'Kirjaudu ensin.'
+      });
+    }
+
+    const room =
+      newRoom();
+
+    joinRoom(
+      room,
+      socket
+    );
+
+    cb({
+      ok: true,
+      code: room.code
+    });
+  });
+
+  socket.on(
+    'joinRoom',
+    (data, cb) => {
+      if (!socket.data.name) {
+        return cb({
+          ok: false,
+          error: 'Kirjaudu ensin.'
+        });
+      }
+
+      const room =
+        rooms.get(
+          String(
+            data?.code || ''
+          )
+            .trim()
+            .toUpperCase()
+        );
+
+      if (!room) {
+        return cb({
+          ok: false,
+          error:
+            'Peliä ei löydy.'
+        });
+      }
+
+      if (room.status !== 'lobby') {
+        return cb({
+          ok: false,
+          error:
+            'Peli on jo alkanut.'
+        });
+      }
+
+      if (
+        room.players.some(
+          player =>
+            player?.name ===
+            socket.data.name
+        )
+      ) {
+        return cb({
+          ok: false,
+          error:
+            'Nimi on jo käytössä tässä pelissä.'
+        });
+      }
+
+      if (
+        room.players.filter(Boolean)
+          .length >= 4
+      ) {
+        return cb({
+          ok: false,
+          error:
+            'Peli on täynnä.'
+        });
+      }
+
+      joinRoom(
+        room,
+        socket
+      );
+
+      cb({
+        ok: true,
+        code: room.code
+      });
+
+      if (
+        room.players.every(Boolean)
+      ) {
+        assignTeams(room);
+        dealRound(room);
+        broadcast(room);
+      }
+    }
+  );
+
+  socket.on(
+    'playCard',
+    (data, cb) => {
+      const room =
+        rooms.get(
+          socket.data.room
+        );
+
+      if (
+        !room ||
+        room.status !== 'playing'
+      ) {
+        return cb?.({
+          ok: false,
+          error:
+            'Peli ei ole käynnissä.'
+        });
+      }
+
+      const player =
+        room.players.find(
+          item =>
+            item?.socketId ===
+            socket.id
+        );
+
+      if (!player) {
+        return cb?.({
+          ok: false,
+          error:
+            'Pelaajaa ei löydy.'
+        });
+      }
+
+      const expectedSeat =
+        (
+          room.leader +
+          room.trick.length
+        ) % 4;
+
+      if (
+        player.seat !==
+        expectedSeat
+      ) {
+        return cb?.({
+          ok: false,
+          error:
+            'Odota omaa vuoroasi.'
+        });
+      }
+
+      const card =
+        cardPool(player).find(
+          item =>
+            item.id ===
+            data?.cardId
+        );
+
+      if (!card) {
+        return cb?.({
+          ok: false,
+          error:
+            'Korttia ei löydy.'
+        });
+      }
+
+      if (
+        !canPlay(
+          room,
+          player,
+          card
+        )
+      ) {
+        return cb?.({
+          ok: false,
+          error:
+            'Sinun täytyy seurata maata.'
+        });
+      }
+
+      const removed =
+        removeCard(
+          player,
+          card.id
+        );
+
+      if (!removed) {
+        return cb?.({
+          ok: false,
+          error:
+            'Korttia ei voitu poistaa.'
+        });
+      }
+
+      // Kortti siirtyy pelaajan omaan pelikasaansa.
+      player.played.push(
+        removed
+      );
+
+      room.trick.push({
+        seat: player.seat,
+        card: removed
+      });
+
+      if (
+        secondTwoStopCandidate(
+          room,
+          player.seat,
+          removed
+        )
+      ) {
+        room.scores[
+          player.team
+        ] += 2;
+
+        room.roundWinner = {
+          seat: player.seat,
+          team: player.team,
+          points: 2,
+          card: removed,
+          special: true
+        };
+
+        room.status =
+          'gameover';
+
+        room.gameWinner =
+          player.team;
+
+        room.pendingTwoStop =
+          null;
+
+        broadcast(room);
+
+        return cb?.({
+          ok: true
+        });
+      }
+
+      if (
+        firstTwoStopCandidate(
+          room,
+          player.seat,
+          removed
+        )
+      ) {
+        room.pendingTwoStop = {
+          seat: player.seat,
+          firstSuit: removed.suit,
+          secondSuit:
+            cardPool(player)[0].suit
+        };
+      } else if (
+        room.pendingTwoStop?.seat ===
+        player.seat
+      ) {
+        room.pendingTwoStop = null;
+      }
+
+      if (
+        room.trick.length === 4
+      ) {
+        finishTrick(room);
+      }
+
+      broadcast(room);
+
+      cb?.({
+        ok: true
+      });
+    }
+  );
+
+  socket.on(
+    'disconnect',
+    () => {
+      const room =
+        rooms.get(
+          socket.data.room
+        );
+
+      if (!room) {
+        return;
+      }
+
+      const player =
+        room.players.find(
+          item =>
+            item?.socketId ===
+            socket.id
+        );
+
+      if (player) {
+        player.connected = false;
+      }
+
+      broadcast(room);
+    }
+  );
+
+  function joinRoom(
+    room,
+    socket
+  ) {
+    const seat =
+      room.players.findIndex(
+        player => !player
+      );
+
+    room.players[seat] = {
+      socketId: socket.id,
+      name: socket.data.name,
+      seat,
+      team: null,
+      hand: [],
+      table: [],
+      played: [],
+      connected: true
+    };
+
+    socket.data.room =
+      room.code;
+
+    socket.join(room.code);
+
+    broadcast(room);
+  }
+});
+
+server.on(
+  'request',
+  (req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(
+        200,
+        {
+          'content-type':
+            'application/json'
+        }
+      );
+
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          service:
+            'tikki-server',
+          rooms:
+            rooms.size
+        })
+      );
+    }
+  }
+);
+
+server.listen(
+  PORT,
+  () =>
+    console.log(
+      `Tikki server kuuntelee portissa ${PORT}`
+    )
+);
