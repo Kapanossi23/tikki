@@ -8,9 +8,21 @@ const PASSWORD = process.env.TIKKI_PASSWORD || 'Tikkijumala';
 const NAMES = ['Hate', 'Kapa', 'Mane', 'Jere'];
 
 const suits = ['♠', '♥', '♦', '♣'];
+
 const ranks = [
-  '2', '3', '4', '5', '6', '7', '8', '9', '10',
-  'J', 'Q', 'K', 'A'
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '10',
+  'J',
+  'Q',
+  'K',
+  'A',
 ];
 
 const rankValue = Object.fromEntries(
@@ -19,36 +31,47 @@ const rankValue = Object.fromEntries(
 
 const rooms = new Map();
 
+
+// --------------------------------------------------
+// KORTIT
+// --------------------------------------------------
+
 const deck = () =>
   suits.flatMap(suit =>
     ranks.map(rank => ({
       id: `${rank}${suit}`,
       rank,
-      suit
+      suit,
     }))
   );
+
 
 const shuffle = array => {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
 
-    [array[i], array[j]] = [
-      array[j],
-      array[i]
-    ];
+    [array[i], array[j]] =
+      [array[j], array[i]];
   }
 
   return array;
 };
 
+
 const compare = (a, b) =>
   rankValue[a.rank] - rankValue[b.rank] ||
   suits.indexOf(a.suit) - suits.indexOf(b.suit);
 
+
 const cardPool = player => [
   ...(player.hand || []),
-  ...(player.table || [])
+  ...(player.table || []),
 ];
+
+
+// --------------------------------------------------
+// UUSI HUONE
+// --------------------------------------------------
 
 function newRoom() {
   let code;
@@ -62,19 +85,40 @@ function newRoom() {
 
   const room = {
     code,
-    players: [null, null, null, null],
-    scores: [0, 0],
+
+    players: [
+      null,
+      null,
+      null,
+      null,
+    ],
+
+    scores: [
+      0,
+      0,
+    ],
+
     round: 1,
+
     leader: 0,
+
     trickNo: 1,
+
     trick: [],
+
     status: 'lobby',
+
     lastResult: null,
+
     roundWinner: null,
+
     gameWinner: null,
+
     pairing: null,
+
     pendingTwoStop: null,
-    nextRoundTimer: null
+
+    nextRoundTimer: null,
   };
 
   rooms.set(code, room);
@@ -82,11 +126,19 @@ function newRoom() {
   return room;
 }
 
+
+// --------------------------------------------------
+// JULKINEN PELITILA
+// --------------------------------------------------
+
 function publicState(room) {
   return {
     code: room.code,
+
     status: room.status,
+
     round: room.round,
+
     scores: room.scores,
 
     players: room.players.map(player =>
@@ -96,41 +148,49 @@ function publicState(room) {
             seat: player.seat,
             connected: player.connected,
             team: player.team,
-            table: player.table,
-            played: player.played
           }
         : null
     ),
 
     leader: room.leader,
+
     trickNo: room.trickNo,
 
     trick: room.trick.map(item => ({
       seat: item.seat,
-      card: item.card
+      card: item.card,
     })),
 
     lastResult: room.lastResult,
+
     roundWinner: room.roundWinner,
+
     gameWinner: room.gameWinner,
 
     pendingTwoStop: room.pendingTwoStop
       ? {
-          seat: room.pendingTwoStop.seat
+          seat: room.pendingTwoStop.seat,
         }
       : null,
 
-    pairing: room.pairing
+    pairing: room.pairing,
   };
 }
+
+
+// --------------------------------------------------
+// PELAAJAKOHTAINEN TILA
+// --------------------------------------------------
 
 function stateFor(room, socketId) {
   const state = publicState(room);
 
   state.self =
     room.players.find(
-      player => player?.socketId === socketId
+      player =>
+        player?.socketId === socketId
     )?.seat ?? null;
+
 
   state.hands = room.players.map(player => {
     if (!player) {
@@ -139,142 +199,235 @@ function stateFor(room, socketId) {
 
     return {
       seat: player.seat,
+
       name: player.name,
 
-      table: player.table,
+      // Pelaajan pöytäkortit
+      table: player.table || [],
 
-      played: player.played,
+      // Pelaajan lyömät kortit
+      played: player.played || [],
 
+      // Oma käsi näkyy oikeasti
+      // Muiden pelaajien käsi näkyy piilotettuna
       hand:
         player.socketId === socketId
-          ? player.hand
-          : player.hand.map(card => ({
+          ? player.hand || []
+          : (player.hand || []).map(card => ({
               id: card.id,
-              hidden: true
-            }))
+              hidden: true,
+            })),
     };
   });
 
   return state;
 }
 
+
+// --------------------------------------------------
+// LÄHETÄ TILA KAIKILLE
+// --------------------------------------------------
+
 function broadcast(room) {
   room.players.forEach(player => {
-    if (player) {
-      io.to(player.socketId).emit(
+    if (!player) return;
+
+    io
+      .to(player.socketId)
+      .emit(
         'state',
         stateFor(room, player.socketId)
       );
-    }
   });
 }
 
+
+// --------------------------------------------------
+// PARIEN ARVONTA
+// --------------------------------------------------
+
 function assignTeams(room) {
+  // Erillinen neljän kortin arvonta
+  // määrittää parit ja ensimmäisen aloittajan.
+
   const draw = shuffle(deck()).slice(0, 4);
 
-  const order = [0, 1, 2, 3].sort(
-    (a, b) => compare(draw[a], draw[b])
+  const order = [
+    0,
+    1,
+    2,
+    3,
+  ].sort(
+    (a, b) =>
+      compare(draw[a], draw[b])
   );
 
+
+  // Suurin + pienin samaan joukkueeseen
   const teamA = new Set([
     order[0],
-    order[3]
+    order[3],
   ]);
 
+
   room.players.forEach((player, seat) => {
-    player.team = teamA.has(seat)
-      ? 0
-      : 1;
+    player.team =
+      teamA.has(seat)
+        ? 0
+        : 1;
   });
+
 
   room.pairing = draw.map(
     (card, seat) => ({
       seat,
       card,
-      team: room.players[seat].team
+      team: room.players[seat].team,
     })
   );
 
+
+  // Arvonnan suurin aloittaa
   room.leader = order[3];
 }
+
+
+// --------------------------------------------------
+// JAA UUSI KIERROS
+// --------------------------------------------------
 
 function dealRound(room) {
   const cards = shuffle(deck());
 
-  room.players.forEach((player, i) => {
+
+  room.players.forEach((player, seat) => {
+    // 5 käsikorttia
     player.hand = cards.slice(
-      i * 8,
-      i * 8 + 5
+      seat * 8,
+      seat * 8 + 5
     );
 
+    // 3 pöytäkorttia
     player.table = cards.slice(
-      i * 8 + 5,
-      i * 8 + 8
+      seat * 8 + 5,
+      seat * 8 + 8
     );
 
+    // Uusi kierros alkaa tyhjällä
+    // lyötyjen korttien kasalla
     player.played = [];
   });
 
+
   room.trick = [];
+
   room.trickNo = 1;
+
   room.lastResult = null;
+
   room.roundWinner = null;
+
   room.pendingTwoStop = null;
+
   room.status = 'playing';
 }
+
+
+// --------------------------------------------------
+// SAANNOt: VOIKO KORTIN LYÖDÄ?
+// --------------------------------------------------
 
 function canPlay(room, player, card) {
   if (!card) {
     return false;
   }
 
+
+  // Jos tikki on tyhjä,
+  // mikä tahansa kortti käy.
   if (!room.trick.length) {
     return true;
   }
 
+
   const lead =
     room.trick[0].card.suit;
 
+
   const hasLead =
     cardPool(player).some(
-      cardInHand =>
-        cardInHand.suit === lead
+      cardInPool =>
+        cardInPool.suit === lead
     );
 
-  return hasLead
-    ? card.suit === lead
-    : true;
+
+  // Jos pelaajalla on tunnustettu maa,
+  // hänen täytyy seurata sitä.
+  if (hasLead) {
+    return card.suit === lead;
+  }
+
+
+  // Muuten saa pelata minkä tahansa.
+  return true;
 }
 
+
+// --------------------------------------------------
+// POISTA KORTTI KÄDESTÄ TAI PÖYTÄKASASTA
+// --------------------------------------------------
+
 function removeCard(player, id) {
-  let index = player.hand.findIndex(
-    card => card.id === id
-  );
+  let index =
+    player.hand.findIndex(
+      card => card.id === id
+    );
+
 
   if (index >= 0) {
-    return player.hand.splice(index, 1)[0];
+    return player.hand.splice(
+      index,
+      1
+    )[0];
   }
 
-  index = player.table.findIndex(
-    card => card.id === id
-  );
+
+  index =
+    player.table.findIndex(
+      card => card.id === id
+    );
+
 
   if (index >= 0) {
-    return player.table.splice(index, 1)[0];
+    return player.table.splice(
+      index,
+      1
+    )[0];
   }
+
 
   return null;
 }
 
-function othersHaveNoSuit(room, seat, suit) {
+
+// --------------------------------------------------
+// KAKKOSEN ERIKOISSÄÄNTÖ
+// --------------------------------------------------
+
+function othersHaveNoSuit(
+  room,
+  seat,
+  suit
+) {
   return room.players.every(
-    (player, i) =>
-      i === seat ||
+    (player, index) =>
+      index === seat ||
       !cardPool(player).some(
         card => card.suit === suit
       )
   );
 }
+
 
 function firstTwoStopCandidate(
   room,
@@ -285,16 +438,23 @@ function firstTwoStopCandidate(
     return false;
   }
 
-  const player = room.players[seat];
+
+  const player =
+    room.players[seat];
+
 
   const remaining =
     cardPool(player);
+
 
   if (remaining.length !== 1) {
     return false;
   }
 
-  const last = remaining[0];
+
+  const last =
+    remaining[0];
+
 
   return (
     last.rank === '2' &&
@@ -307,6 +467,7 @@ function firstTwoStopCandidate(
   );
 }
 
+
 function secondTwoStopCandidate(
   room,
   seat,
@@ -314,6 +475,7 @@ function secondTwoStopCandidate(
 ) {
   const pending =
     room.pendingTwoStop;
+
 
   return (
     !!pending &&
@@ -328,23 +490,40 @@ function secondTwoStopCandidate(
   );
 }
 
+
+// --------------------------------------------------
+// TIKIN LOPETUS
+// --------------------------------------------------
+
 function finishTrick(room) {
   const lead =
     room.trick[0].card.suit;
 
+
+  // Vain tunnustettua maata pelanneet
+  // voivat voittaa tikin.
   const eligible =
     room.trick.filter(
       item =>
         item.card.suit === lead
     );
 
+
   const winner =
     eligible.reduce(
-      (a, b) =>
-        compare(a.card, b.card) > 0
-          ? a
-          : b
+      (best, current) =>
+        compare(
+          current.card,
+          best.card
+        ) > 0
+          ? current
+          : best
     );
+
+
+  // ----------------------------------------------
+  // 8. TIKKI
+  // ----------------------------------------------
 
   if (room.trickNo === 8) {
     const points =
@@ -352,18 +531,23 @@ function finishTrick(room) {
         ? 2
         : 1;
 
+
     room.scores[
       room.players[winner.seat].team
     ] += points;
+
 
     room.roundWinner = {
       seat: winner.seat,
       team:
         room.players[winner.seat].team,
       points,
-      card: winner.card
+      card: winner.card,
     };
 
+
+    // Jos joukkue saavutti 5 pistettä,
+    // koko peli päättyy.
     if (
       room.scores[
         room.players[winner.seat].team
@@ -377,15 +561,23 @@ function finishTrick(room) {
       return;
     }
 
+
+    // Kierros päättyi.
     room.status = 'roundEnd';
 
     room.round += 1;
 
+
+    // TÄRKEÄ:
+    // 8. tikin voittaja aloittaa
+    // seuraavan kierroksen.
     room.leader = winner.seat;
+
 
     clearTimeout(
       room.nextRoundTimer
     );
+
 
     room.nextRoundTimer =
       setTimeout(() => {
@@ -399,393 +591,578 @@ function finishTrick(room) {
         }
       }, 2800);
 
+
     return;
   }
 
+
+  // ----------------------------------------------
+  // NORMAALI TIKKI
+  // ----------------------------------------------
+
   room.lastResult = {
     seat: winner.seat,
-    card: winner.card
+    card: winner.card,
   };
 
+
+  // Seuraavaa tikkiä varten
+  // voittaja aloittaa.
+  room.leader = winner.seat;
+
+
+  // Tyhjennetään keskellä oleva tikki.
   room.trick = [];
 
-  room.trickNo += 1;
 
-  room.leader = winner.seat;
+  room.trickNo += 1;
 }
 
-const server = http.createServer();
 
-const io = new Server(server, {
-  cors: {
-    origin: '*'
-  }
-});
+// --------------------------------------------------
+// SOCKET.IO
+// --------------------------------------------------
 
-io.on('connection', socket => {
+const server =
+  http.createServer();
 
-  socket.on('login', (data, cb) => {
-    if (
-      !NAMES.includes(data?.name) ||
-      data?.password !== PASSWORD
-    ) {
-      return cb({
-        ok: false,
-        error:
-          'Väärä nimi tai salasana.'
-      });
-    }
 
-    socket.data.name =
-      data.name;
-
-    cb({
-      ok: true
-    });
+const io =
+  new Server(server, {
+    cors: {
+      origin: '*',
+    },
   });
 
-  socket.on('createRoom', cb => {
-    if (!socket.data.name) {
-      return cb({
-        ok: false,
-        error: 'Kirjaudu ensin.'
-      });
-    }
 
-    const room =
-      newRoom();
+io.on(
+  'connection',
+  socket => {
 
-    joinRoom(
-      room,
-      socket
-    );
+    // --------------------------------------------
+    // KIRJAUTUMINEN
+    // --------------------------------------------
 
-    cb({
-      ok: true,
-      code: room.code
-    });
-  });
+    socket.on(
+      'login',
+      (data, callback) => {
 
-  socket.on(
-    'joinRoom',
-    (data, cb) => {
-      if (!socket.data.name) {
-        return cb({
-          ok: false,
-          error: 'Kirjaudu ensin.'
+        if (
+          !NAMES.includes(
+            data?.name
+          ) ||
+          data?.password !== PASSWORD
+        ) {
+          return callback({
+            ok: false,
+            error:
+              'Väärä nimi tai salasana.',
+          });
+        }
+
+
+        socket.data.name =
+          data.name;
+
+
+        callback({
+          ok: true,
         });
       }
+    );
 
-      const room =
-        rooms.get(
+
+    // --------------------------------------------
+    // LUO PELI
+    // --------------------------------------------
+
+    socket.on(
+      'createRoom',
+      callback => {
+
+        if (!socket.data.name) {
+          return callback({
+            ok: false,
+            error:
+              'Kirjaudu ensin.',
+          });
+        }
+
+
+        const room =
+          newRoom();
+
+
+        joinRoom(
+          room,
+          socket
+        );
+
+
+        callback({
+          ok: true,
+          code: room.code,
+        });
+      }
+    );
+
+
+    // --------------------------------------------
+    // LIITY PELIIN
+    // --------------------------------------------
+
+    socket.on(
+      'joinRoom',
+      (data, callback) => {
+
+        if (!socket.data.name) {
+          return callback({
+            ok: false,
+            error:
+              'Kirjaudu ensin.',
+          });
+        }
+
+
+        const code =
           String(
             data?.code || ''
           )
             .trim()
-            .toUpperCase()
-        );
+            .toUpperCase();
 
-      if (!room) {
-        return cb({
-          ok: false,
-          error:
-            'Peliä ei löydy.'
-        });
-      }
 
-      if (room.status !== 'lobby') {
-        return cb({
-          ok: false,
-          error:
-            'Peli on jo alkanut.'
-        });
-      }
+        const room =
+          rooms.get(code);
 
-      if (
-        room.players.some(
-          player =>
-            player?.name ===
-            socket.data.name
-        )
-      ) {
-        return cb({
-          ok: false,
-          error:
-            'Nimi on jo käytössä tässä pelissä.'
-        });
-      }
 
-      if (
-        room.players.filter(Boolean)
-          .length >= 4
-      ) {
-        return cb({
-          ok: false,
-          error:
-            'Peli on täynnä.'
-        });
-      }
+        if (!room) {
+          return callback({
+            ok: false,
+            error:
+              'Peliä ei löydy.',
+          });
+        }
 
-      joinRoom(
-        room,
-        socket
-      );
 
-      cb({
-        ok: true,
-        code: room.code
-      });
+        if (
+          room.status !== 'lobby'
+        ) {
+          return callback({
+            ok: false,
+            error:
+              'Peli on jo alkanut.',
+          });
+        }
 
-      if (
-        room.players.every(Boolean)
-      ) {
-        assignTeams(room);
-        dealRound(room);
-        broadcast(room);
-      }
-    }
-  );
 
-  socket.on(
-    'playCard',
-    (data, cb) => {
-      const room =
-        rooms.get(
-          socket.data.room
-        );
+        if (
+          room.players.some(
+            player =>
+              player?.name ===
+              socket.data.name
+          )
+        ) {
+          return callback({
+            ok: false,
+            error:
+              'Nimi on jo käytössä tässä pelissä.',
+          });
+        }
 
-      if (
-        !room ||
-        room.status !== 'playing'
-      ) {
-        return cb?.({
-          ok: false,
-          error:
-            'Peli ei ole käynnissä.'
-        });
-      }
 
-      const player =
-        room.players.find(
-          item =>
-            item?.socketId ===
-            socket.id
-        );
+        if (
+          room.players.filter(Boolean)
+            .length >= 4
+        ) {
+          return callback({
+            ok: false,
+            error:
+              'Peli on täynnä.',
+          });
+        }
 
-      if (!player) {
-        return cb?.({
-          ok: false,
-          error:
-            'Pelaajaa ei löydy.'
-        });
-      }
 
-      const expectedSeat =
-        (
-          room.leader +
-          room.trick.length
-        ) % 4;
-
-      if (
-        player.seat !==
-        expectedSeat
-      ) {
-        return cb?.({
-          ok: false,
-          error:
-            'Odota omaa vuoroasi.'
-        });
-      }
-
-      const card =
-        cardPool(player).find(
-          item =>
-            item.id ===
-            data?.cardId
-        );
-
-      if (!card) {
-        return cb?.({
-          ok: false,
-          error:
-            'Korttia ei löydy.'
-        });
-      }
-
-      if (
-        !canPlay(
+        joinRoom(
           room,
-          player,
-          card
-        )
-      ) {
-        return cb?.({
-          ok: false,
-          error:
-            'Sinun täytyy seurata maata.'
-        });
-      }
-
-      const removed =
-        removeCard(
-          player,
-          card.id
+          socket
         );
 
-      if (!removed) {
-        return cb?.({
-          ok: false,
-          error:
-            'Korttia ei voitu poistaa.'
+
+        callback({
+          ok: true,
+          code: room.code,
         });
+
+
+        // Kun neljä pelaajaa on paikalla,
+        // arvotaan parit ja aloitetaan peli.
+        if (
+          room.players.every(Boolean)
+        ) {
+          assignTeams(room);
+
+          dealRound(room);
+
+          broadcast(room);
+        }
       }
+    );
 
-      // Kortti siirtyy pelaajan omaan pelikasaansa.
-      player.played.push(
-        removed
-      );
 
-      room.trick.push({
-        seat: player.seat,
-        card: removed
-      });
+    // --------------------------------------------
+    // PELAA KORTTI
+    // --------------------------------------------
 
-      if (
-        secondTwoStopCandidate(
-          room,
-          player.seat,
-          removed
-        )
-      ) {
-        room.scores[
-          player.team
-        ] += 2;
+    socket.on(
+      'playCard',
+      (data, callback) => {
 
-        room.roundWinner = {
+        const room =
+          rooms.get(
+            socket.data.room
+          );
+
+
+        if (
+          !room ||
+          room.status !== 'playing'
+        ) {
+          return callback?.({
+            ok: false,
+            error:
+              'Peli ei ole käynnissä.',
+          });
+        }
+
+
+        const player =
+          room.players.find(
+            item =>
+              item?.socketId ===
+              socket.id
+          );
+
+
+        if (!player) {
+          return callback?.({
+            ok: false,
+            error:
+              'Pelaajaa ei löydy.',
+          });
+        }
+
+
+        // Seuraava pelaaja määräytyy
+        // tikin aloittajasta.
+        const expectedSeat =
+          (
+            room.leader +
+            room.trick.length
+          ) % 4;
+
+
+        if (
+          player.seat !==
+          expectedSeat
+        ) {
+          return callback?.({
+            ok: false,
+            error:
+              'Odota omaa vuoroasi.',
+          });
+        }
+
+
+        // Etsi kortti kädestä
+        // tai pöytäkorttien joukosta.
+        const card =
+          cardPool(player).find(
+            item =>
+              item.id ===
+              data?.cardId
+          );
+
+
+        if (!card) {
+          return callback?.({
+            ok: false,
+            error:
+              'Korttia ei löydy.',
+          });
+        }
+
+
+        // Tarkista tunnustettu maa.
+        if (
+          !canPlay(
+            room,
+            player,
+            card
+          )
+        ) {
+          return callback?.({
+            ok: false,
+            error:
+              'Sinun täytyy seurata maata.',
+          });
+        }
+
+
+        // Poistetaan kortti kädestä
+        // tai pöytäkorteista.
+        const removed =
+          removeCard(
+            player,
+            card.id
+          );
+
+
+        if (!removed) {
+          return callback?.({
+            ok: false,
+            error:
+              'Korttia ei voitu poistaa.',
+          });
+        }
+
+
+        // ----------------------------------------
+        // LISÄÄ KORTTI KESKELLÄ OLEVAAN TIKKIIN
+        // ----------------------------------------
+
+        room.trick.push({
           seat: player.seat,
-          team: player.team,
-          points: 2,
           card: removed,
-          special: true
-        };
+        });
 
-        room.status =
-          'gameover';
 
-        room.gameWinner =
-          player.team;
+        // ----------------------------------------
+        // LISÄÄ KORTTI PELAAJAN OMAAN
+        // LYÖTYJEN KORTTIEN KASAAN
+        // ----------------------------------------
 
-        room.pendingTwoStop =
-          null;
+        player.played.push(
+          removed
+        );
+
+
+        // ----------------------------------------
+        // KAHDEN KAKKOSEN ERIKOISSÄÄNTÖ
+        // ----------------------------------------
+
+        if (
+          secondTwoStopCandidate(
+            room,
+            player.seat,
+            removed
+          )
+        ) {
+
+          room.scores[
+            player.team
+          ] += 2;
+
+
+          room.roundWinner = {
+            seat: player.seat,
+            team: player.team,
+            points: 2,
+            card: removed,
+            special: true,
+          };
+
+
+          room.status =
+            'gameover';
+
+
+          room.gameWinner =
+            player.team;
+
+
+          room.pendingTwoStop =
+            null;
+
+
+          broadcast(room);
+
+
+          return callback?.({
+            ok: true,
+          });
+        }
+
+
+        if (
+          firstTwoStopCandidate(
+            room,
+            player.seat,
+            removed
+          )
+        ) {
+
+          const remaining =
+            cardPool(player);
+
+
+          room.pendingTwoStop = {
+            seat: player.seat,
+            firstSuit:
+              removed.suit,
+            secondSuit:
+              remaining[0].suit,
+          };
+
+        } else if (
+          room.pendingTwoStop?.seat ===
+          player.seat
+        ) {
+
+          room.pendingTwoStop =
+            null;
+        }
+
+
+        // ----------------------------------------
+        // JOS NELJÄ KORTTIA ON PELATTU
+        // LOPETA TIKKI
+        // ----------------------------------------
+
+        if (
+          room.trick.length === 4
+        ) {
+          finishTrick(room);
+        }
+
 
         broadcast(room);
 
-        return cb?.({
-          ok: true
+
+        callback?.({
+          ok: true,
         });
       }
+    );
 
-      if (
-        firstTwoStopCandidate(
-          room,
-          player.seat,
-          removed
-        )
-      ) {
-        room.pendingTwoStop = {
-          seat: player.seat,
-          firstSuit: removed.suit,
-          secondSuit:
-            cardPool(player)[0].suit
-        };
-      } else if (
-        room.pendingTwoStop?.seat ===
-        player.seat
-      ) {
-        room.pendingTwoStop = null;
+
+    // --------------------------------------------
+    // YHTEYS KATKEAA
+    // --------------------------------------------
+
+    socket.on(
+      'disconnect',
+      () => {
+
+        const room =
+          rooms.get(
+            socket.data.room
+          );
+
+
+        if (!room) {
+          return;
+        }
+
+
+        const player =
+          room.players.find(
+            item =>
+              item?.socketId ===
+              socket.id
+          );
+
+
+        if (player) {
+          player.connected =
+            false;
+        }
+
+
+        broadcast(room);
       }
+    );
 
-      if (
-        room.trick.length === 4
-      ) {
-        finishTrick(room);
-      }
 
-      broadcast(room);
+    // --------------------------------------------
+    // LIITÄ PELAAJA HUONEESEEN
+    // --------------------------------------------
 
-      cb?.({
-        ok: true
-      });
-    }
-  );
+    function joinRoom(
+      room,
+      socket
+    ) {
 
-  socket.on(
-    'disconnect',
-    () => {
-      const room =
-        rooms.get(
-          socket.data.room
+      const seat =
+        room.players.findIndex(
+          player => !player
         );
 
-      if (!room) {
-        return;
-      }
 
-      const player =
-        room.players.find(
-          item =>
-            item?.socketId ===
-            socket.id
-        );
+      room.players[seat] = {
+        socketId:
+          socket.id,
 
-      if (player) {
-        player.connected = false;
-      }
+        name:
+          socket.data.name,
 
-      broadcast(room);
-    }
-  );
+        seat,
 
-  function joinRoom(
-    room,
-    socket
-  ) {
-    const seat =
-      room.players.findIndex(
-        player => !player
+        team:
+          null,
+
+        hand:
+          [],
+
+        table:
+          [],
+
+        // UUSI:
+        // pelaajan kaikki lyömät kortit
+        played:
+          [],
+
+        connected:
+          true,
+      };
+
+
+      socket.data.room =
+        room.code;
+
+
+      socket.join(
+        room.code
       );
 
-    room.players[seat] = {
-      socketId: socket.id,
-      name: socket.data.name,
-      seat,
-      team: null,
-      hand: [],
-      table: [],
-      played: [],
-      connected: true
-    };
 
-    socket.data.room =
-      room.code;
-
-    socket.join(room.code);
-
-    broadcast(room);
+      broadcast(room);
+    }
   }
-});
+);
+
+
+// --------------------------------------------------
+// HEALTH CHECK
+// --------------------------------------------------
 
 server.on(
   'request',
   (req, res) => {
-    if (req.url === '/health') {
+
+    if (
+      req.url ===
+      '/health'
+    ) {
+
       res.writeHead(
         200,
         {
           'content-type':
-            'application/json'
+            'application/json',
         }
       );
+
 
       return res.end(
         JSON.stringify({
@@ -793,17 +1170,23 @@ server.on(
           service:
             'tikki-server',
           rooms:
-            rooms.size
+            rooms.size,
         })
       );
     }
   }
 );
 
+
+// --------------------------------------------------
+// KÄYNNISTÄ PALVELIN
+// --------------------------------------------------
+
 server.listen(
   PORT,
-  () =>
+  () => {
     console.log(
       `Tikki server kuuntelee portissa ${PORT}`
-    )
+    );
+  }
 );
