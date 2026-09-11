@@ -15,12 +15,7 @@ const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.f
 const compare = (a, b) => rankValue[a.rank] - rankValue[b.rank] || suits.indexOf(a.suit) - suits.indexOf(b.suit);
 const cardPool = p => [...p.hand, ...p.table];
 
-function newRoom() {
-  let code;
-  do code = crypto.randomBytes(3).toString('hex').toUpperCase(); while (rooms.has(code));
-  const r = { code, players: [null, null, null, null], scores: [0, 0], round: 1, leader: 0, trickNo: 1, trick: [], status: 'lobby', lastResult: null, roundWinner: null, gameWinner: null, pairing: null, pendingTwoStop: null, nextRoundTimer: null };
-  rooms.set(code, r);
-  return r;
+const r = { code, players: [null, null, null, null], scores: [0, 0], round: 1, leader: 0, trickNo: 1, trick: [], status: 'lobby', lastResult: null, roundWinner: null, gameWinner: null, pairing: null, pendingTwoStop: null, nextRoundTimer: null };
 }
 
 function publicState(r) {
