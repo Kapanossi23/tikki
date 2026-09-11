@@ -6,7 +6,7 @@ import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 import { io } from 'socket.io-client';
 
-const SERVER_URL = Constants.expoConfig?.extra?.serverUrl || process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:3001';
+const SERVER_URL = 'https://tikki-ipp5.onrender.com';
 const NAMES = ['Hate', 'Kapa', 'Mane', 'Jere'];
 const SUIT_COLOR = { '♥': '#d83b56', '♦': '#d83b56', '♠': '#101820', '♣': '#101820' };
 const W = Dimensions.get('window').width;
