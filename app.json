@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Tikki",
+    "slug": "tikki",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#08111f"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "fi.tikki.app"
+    },
+    "android": {
+      "package": "fi.tikki.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#08111f"
+      }
+    },
+    "extra": {
+      "serverUrl": "http://YOUR-SERVER-IP:3001"
+    }
+  }
+}

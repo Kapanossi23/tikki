@@ -1,0 +1,8 @@
+{
+  "build": {
+    "production": {
+      "autoIncrement": true,
+      "env": { "EXPO_PUBLIC_SERVER_URL": "https://YOUR-TIKKI-SERVER.example.com" }
+    }
+  }
+}

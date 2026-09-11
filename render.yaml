@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: tikki-server
+    runtime: docker
+    rootDir: server
+    healthCheckPath: /health
+    envVars:
+      - key: TIKKI_PASSWORD
+        sync: false
