@@ -377,4 +377,52 @@ function finishTrick(room) {
       return;
     }
 
-    room.status = 'roundEnd
+    room.status = 'roundEnd';
+
+    room.round += 1;
+
+    room.leader = winner.seat;
+
+    clearTimeout(
+      room.nextRoundTimer
+    );
+
+    room.nextRoundTimer =
+      setTimeout(() => {
+        if (
+          rooms.has(room.code) &&
+          room.status === 'roundEnd'
+        ) {
+          dealRound(room);
+
+          broadcast(room);
+        }
+      }, 2800);
+
+    return;
+  }
+
+  room.lastResult = {
+    seat: winner.seat,
+    card: winner.card
+  };
+
+  room.trick = [];
+
+  room.trickNo += 1;
+
+  room.leader = winner.seat;
+}
+
+const server = http.createServer();
+
+const io = new Server(server, {
+  cors: {
+    origin: '*'
+  }
+});
+
+io.on('connection', socket => {
+
+  socket.on('login', (data, cb) => {
+    if (
