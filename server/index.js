@@ -130,7 +130,7 @@ function finishTrick(r) {
     }
     r.status = 'roundEnd';
     r.round++;
-    r.leader = (r.leader + 1) % 4;
+    r.leader = winner.seat;
     clearTimeout(r.nextRoundTimer);
     r.nextRoundTimer = setTimeout(() => { if (rooms.has(r.code) && r.status === 'roundEnd') { dealRound(r); broadcast(r); } }, 2800);
     return;
@@ -138,7 +138,7 @@ function finishTrick(r) {
   r.lastResult = { seat: winner.seat, card: winner.card };
   r.trick = [];
   r.trickNo += 1;
-  r.leader = (r.leader + 1) % 4;
+  r.leader = winner.seat;
 }
 
 const server = http.createServer();
